@@ -13,6 +13,8 @@ const SQL_IDENTIFIER_DIALECTS = {
 export function quoteIdentifierIfNecessary(value: string, dialect: SqlIdentifierDialect): string {
   const { quote, unquotedPattern } = SQL_IDENTIFIER_DIALECTS[dialect];
 
+  // Treat the full string as one identifier. Dots are part of the name
+  // (e.g. sales.east.revenue), not a schema.table path to quote per segment.
   if (unquotedPattern.test(value)) {
     return value;
   }
