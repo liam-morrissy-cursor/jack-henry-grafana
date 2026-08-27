@@ -55,13 +55,28 @@ function mapFieldsToTypes(columns: SQLSelectableValue[]) {
 }
 
 export function removeQuotesForMultiVariables(val: SQLExpression, templateVars: TypedVariableModel[]) {
-  const multiVariableInWhereString = (tv: TypedVariableModel) =>
-    'multi' in tv &&
-    tv.multi &&
-    (val.whereString?.includes(`\${${tv.name}}`) || val.whereString?.includes(`$${tv.name}`));
-
-  if (templateVars.some((tv) => multiVariableInWhereString(tv))) {
-    val.whereString = val.whereString?.replaceAll("')", ')');
-    val.whereString = val.whereString?.replaceAll("('", '(');
+  if (!val.whereString) {
+    return;
   }
+
+  let whereString = val.whereString;
+
+  for (const tv of templateVars) {
+    if (!('multi' in tv) || !tv.multi) {
+      continue;
+    }
+
+    const braced = `\${${tv.name}}`;
+    const unbraced = `$${tv.name}`;
+
+    // Only unwrap quotes around this multi-value variable — not every (' / ') in the WHERE string.
+    if (whereString.includes(braced)) {
+      whereString = whereString.replaceAll(`('${braced}')`, `(${braced})`);
+    }
+    if (whereString.includes(unbraced)) {
+      whereString = whereString.replaceAll(`('${unbraced}')`, `(${unbraced})`);
+    }
+  }
+
+  val.whereString = whereString;
 }
