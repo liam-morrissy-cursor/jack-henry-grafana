@@ -100,9 +100,9 @@ export function ExistingSolutionCard({ existing, selected, onSelect }: ExistingS
                 ) : (
                   selected.stats && (
                     <Stack direction="column" gap={0}>
-                      <Text variant="h2" color="primary">
+                      <span className={styles.statPrimary} data-testid="home-stat-primary">
                         {selected.stats.primary}
-                      </Text>
+                      </span>
                       <Text variant="body" color="secondary">
                         {selected.stats.secondary}
                       </Text>
@@ -210,6 +210,11 @@ const getStyles = (theme: GrafanaTheme2) => ({
   }),
   stats: css({
     flexShrink: 0,
+  }),
+  statPrimary: css({
+    ...theme.typography.h2,
+    color: theme.visualization.getColorByName('purple'),
+    margin: 0,
   }),
   sparklineArea: css({
     flex: '1 1 auto',
