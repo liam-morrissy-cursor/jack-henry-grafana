@@ -27,8 +27,14 @@ jobs:
       # NOTE: Only checks test coverage for opted-in codeowners.
       #       Please add the GitHub user/team or email used in
       #       CODEOWNERS to the list below to opt-in.
+      #
+      # Gate semantics: regression-only vs the PR base (main). There is no
+      # absolute coverage threshold. First gated run for a newly opted-in
+      # team uses whatever coverage is on main at merge time as the baseline
+      # (KAN-51 / KAN-39: land Wave 1–2 backfill before merging this opt-in).
       opted-in-teams: >-
         [
+          "@grafana/data-sources-plugins",
           "@grafana/datapro",
           "@grafana/dataviz-squad",
           "@grafana/grafana-operator-experience-squad",
