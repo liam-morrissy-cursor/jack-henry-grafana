@@ -97,6 +97,67 @@ test.describe(
       ).not.toHaveValue(`SELECT\n  createdAt\nFROM\n  grafana.normalTable\nWHERE\n  createdAt = NULL\nLIMIT\n  50`);
     });
 
+    test('visual query builder should handle GROUP BY', async ({ explorePage, page }) => {
+      await explorePage.getByGrafanaSelector(selectors.components.SQLQueryEditor.headerTableSelector).click();
+      await page.getByText(normalTableName, { exact: true }).click();
+
+      await explorePage.getByGrafanaSelector(selectors.components.SQLQueryEditor.selectColumn).click();
+      const select = page.getByLabel('Select options menu');
+      await select.locator(page.getByText('createdAt')).click();
+
+      await explorePage
+        .getByGrafanaSelector(selectors.components.SQLQueryEditor.headerGroupSwitch)
+        .click({ force: true });
+
+      await page.getByLabel('Group by', { exact: true }).click();
+      await select.locator(page.getByText('createdAt')).click();
+
+      await expect(
+        explorePage.getByGrafanaSelector(selectors.components.CodeEditor.container).getByRole('textbox')
+      ).toHaveValue(`SELECT\n  createdAt\nFROM\n  grafana.normalTable\nGROUP BY\n  createdAt\nLIMIT\n  50`);
+    });
+
+    test('visual query builder should handle ORDER BY', async ({ explorePage, page }) => {
+      await explorePage.getByGrafanaSelector(selectors.components.SQLQueryEditor.headerTableSelector).click();
+      await page.getByText(normalTableName, { exact: true }).click();
+
+      await explorePage.getByGrafanaSelector(selectors.components.SQLQueryEditor.selectColumn).click();
+      const select = page.getByLabel('Select options menu');
+      await select.locator(page.getByText('createdAt')).click();
+
+      await explorePage
+        .getByGrafanaSelector(selectors.components.SQLQueryEditor.headerOrderSwitch)
+        .click({ force: true });
+
+      await page.getByLabel('Order by', { exact: true }).click();
+      await select.locator(page.getByText('createdAt')).click();
+
+      await explorePage.getByGrafanaSelector(selectors.components.RadioButton.option('DESC')).click();
+
+      await expect(
+        explorePage.getByGrafanaSelector(selectors.components.CodeEditor.container).getByRole('textbox')
+      ).toHaveValue(`SELECT\n  createdAt\nFROM\n  grafana.normalTable\nORDER BY\n  createdAt DESC\nLIMIT\n  50`);
+    });
+
+    test('visual query builder should handle LIMIT', async ({ explorePage, page }) => {
+      await explorePage.getByGrafanaSelector(selectors.components.SQLQueryEditor.headerTableSelector).click();
+      await page.getByText(normalTableName, { exact: true }).click();
+
+      await explorePage.getByGrafanaSelector(selectors.components.SQLQueryEditor.selectColumn).click();
+      const select = page.getByLabel('Select options menu');
+      await select.locator(page.getByText('createdAt')).click();
+
+      await explorePage
+        .getByGrafanaSelector(selectors.components.SQLQueryEditor.headerOrderSwitch)
+        .click({ force: true });
+
+      await page.getByLabel(/Limit/).fill('10');
+
+      await expect(
+        explorePage.getByGrafanaSelector(selectors.components.CodeEditor.container).getByRole('textbox')
+      ).toHaveValue(`SELECT\n  createdAt\nFROM\n  grafana.normalTable\nLIMIT\n  10`);
+    });
+
     test('visual query builder should not crash when filter is set to select_any_in', async ({ explorePage, page }) => {
       const queryParams = new URLSearchParams();
       queryParams.set('schemaVersion', '1');
