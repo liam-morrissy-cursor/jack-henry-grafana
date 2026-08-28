@@ -49,9 +49,14 @@ func (s *Service) GetSQLSchemas(ctx context.Context, req Request) (queryV0.SQLSc
 			// we want to continue and get the schemas we can
 		}
 
+		if res.IsNoData() {
+			schemas[dsNode.RefID()] = queryV0.SchemaInfo{Error: "no data"}
+			continue
+		}
 		frames := res.Values.AsDataFrames(dsNode.RefID())
 		if len(frames) == 0 {
 			schemas[dsNode.RefID()] = queryV0.SchemaInfo{Error: "no data"}
+			continue
 		}
 		frame := frames[0]
 
