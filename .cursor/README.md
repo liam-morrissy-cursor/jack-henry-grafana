@@ -14,6 +14,15 @@ Glance map for Rules / Hooks / Skills / Commands. Skip deep dives if the room al
 - `.claude/skills/panel-testing-strategy/` — viz unit/E2E craft (**noop**)
 - `.claude/skills/add-e2e-selectors/` — versioned `data-testid` wiring (**noop**)
 - `.claude/skills/add-e2e-tests/` — Playwright suite conventions (**added**)
+- `.cursor/skills/mm-test-frontend/` — Jest, diff-scoped FE (**TestGuardian**)
+- `.cursor/skills/mm-test-api/` — api4 / API tests; never Playwright on api4-only
+- `.cursor/skills/mm-test-backend/` — `make test-server` / targeted Go tests
+
+## Agents
+
+- `.cursor/agents/test-guardian.md` — picks mm-test-* skills from the diff;
+  `select-skills.mjs` enforces api4-only → no Playwright. Invoke before
+  `gh pr create` (see `.cursor/rules/test-guardian-before-pr.mdc`).
 
 ## Hooks
 

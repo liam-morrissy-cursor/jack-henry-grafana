@@ -1,0 +1,28 @@
+---
+description: Run TestGuardian before opening a GitHub PR
+alwaysApply: true
+---
+
+# TestGuardian before `gh pr create`
+
+Before `gh pr create`, `open_git_pr`, or any other step that opens a pull
+request for ticket work:
+
+1. Invoke the **TestGuardian** subagent / follow `.cursor/agents/test-guardian.md`.
+2. Classify the branch diff with:
+
+```bash
+node .cursor/agents/select-skills.mjs $(git diff --name-only origin/main...HEAD)
+```
+
+3. Run only the selected skills from `.cursor/skills/`:
+   - `mm-test-frontend` — Jest
+   - `mm-test-api` — api4 / API tests
+   - `mm-test-backend` — `make test-server` (or targeted `go test`)
+4. If the router reports `runPlaywright: false`, do **not** run Playwright.
+   api4-only diffs must stay on `mm-test-api` alone.
+
+Record the router JSON and commands in the PR **Test plan**.
+
+Exception: the restore-broken-baseline skill remains restore-only and must not
+open a PR (see `open-a-pr` rule).
