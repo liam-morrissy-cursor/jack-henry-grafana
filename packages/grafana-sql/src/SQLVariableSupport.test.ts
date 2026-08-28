@@ -1,7 +1,11 @@
-import { type DataFrame, type Field, FieldType } from '@grafana/data';
+import { type DataFrame, type DataQueryRequest, type Field, FieldType } from '@grafana/data';
 import { EditorMode } from '@grafana/plugin-ui';
+import { lastValueFrom, of } from 'rxjs';
 
-import { migrateVariableQuery, convertFieldsToVariableFields, updateFrame } from './SQLVariableUtils';
+import { SQLVariablesQueryEditor } from './SQLVariableEditor';
+import { SQLVariableSupport } from './SQLVariableSupport';
+import { migrateVariableQuery, convertFieldsToVariableFields, updateFrame, refId } from './SQLVariableUtils';
+import { type SqlDatasource } from './datasource/SqlDatasource';
 import { QueryFormat, type SQLQuery, type SQLQueryMeta } from './types';
 
 const refId = 'SQLVariableQueryEditor-VariableQuery';
@@ -200,4 +204,81 @@ const field = (name: string, type: FieldType = FieldType.string, values: unknown
   type,
   values,
   config: {},
+});
+
+describe('SQLVariableSupport', () => {
+  const makeDatasource = (response: DataFrame[] = []) =>
+    ({
+      query: jest.fn().mockReturnValue(of({ data: response })),
+    }) as unknown as SqlDatasource;
+
+  const makeRequest = (targets: Array<string | SQLQuery>): DataQueryRequest<SQLQuery> =>
+    ({
+      targets,
+    }) as DataQueryRequest<SQLQuery>;
+
+  it('uses SQLVariablesQueryEditor as the custom variable editor', () => {
+    const support = new SQLVariableSupport(makeDatasource());
+    expect(support.editor).toBe(SQLVariablesQueryEditor);
+  });
+
+  it('getDefaultQuery returns a builder-mode table query with the variable refId', () => {
+    const support = new SQLVariableSupport(makeDatasource());
+    expect(support.getDefaultQuery()).toMatchObject({
+      refId,
+      editorMode: EditorMode.Builder,
+      format: QueryFormat.Table,
+      rawSql: '',
+    });
+  });
+
+  it('throws when query is submitted with no targets', () => {
+    const support = new SQLVariableSupport(makeDatasource());
+    expect(() => support.query(makeRequest([]))).toThrow('no variable query found');
+  });
+
+  it('migrates the target and submits it to the datasource', async () => {
+    const frame: DataFrame = {
+      name: 'users',
+      length: 2,
+      fields: [field('id', FieldType.number, [1, 2]), field('name', FieldType.string, ['a', 'b'])],
+    };
+    const datasource = makeDatasource([frame]);
+    const support = new SQLVariableSupport(datasource);
+
+    const result = await lastValueFrom(support.query(makeRequest([sampleQuery])));
+
+    expect(datasource.query).toHaveBeenCalledTimes(1);
+    const submitted = (datasource.query as jest.Mock).mock.calls[0][0] as DataQueryRequest<SQLQuery>;
+    expect(submitted.targets).toHaveLength(1);
+    expect(submitted.targets[0]).toMatchObject({
+      refId,
+      rawSql: sampleQuery,
+      query: sampleQuery,
+      editorMode: EditorMode.Code,
+      format: QueryFormat.Table,
+    });
+    expect(result.data[0].fields[0].name).toBe('text');
+    expect(result.data[0].fields[1].name).toBe('value');
+  });
+
+  it('applies meta value/text field mapping when transforming the response frame', async () => {
+    const frame: DataFrame = {
+      name: 'users',
+      length: 2,
+      fields: [field('id', FieldType.number, [1, 2]), field('name', FieldType.string, ['a', 'b'])],
+    };
+    const datasource = makeDatasource([frame]);
+    const support = new SQLVariableSupport(datasource);
+    const target: SQLQuery = {
+      refId: 'A',
+      rawSql: sampleQuery,
+      meta: { valueField: 'id', textField: 'name' },
+    };
+
+    const result = await lastValueFrom(support.query(makeRequest([target])));
+
+    expect(result.data[0].fields[0]).toMatchObject({ name: 'text', values: ['a', 'b'] });
+    expect(result.data[0].fields[1]).toMatchObject({ name: 'value', values: [1, 2] });
+  });
 });
