@@ -47,6 +47,7 @@ func RequiresExistingAccessToken(publicDashboardService publicdashboards.Service
 
 		if !validation.IsValidAccessToken(accessToken) {
 			c.JsonApiErr(http.StatusBadRequest, "Invalid access token", nil)
+			return
 		}
 
 		// Check that the access token references an enabled public dashboard

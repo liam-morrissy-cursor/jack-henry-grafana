@@ -28,6 +28,9 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 		AccessTokenExistsErr error
 		AccessToken          string
 		ExpectedResponseCode int
+		// ExpectLookup is true when the middleware should call ExistsEnabledByAccessToken.
+		// Missing/invalid tokens must stop before that lookup so a later 404/500 cannot overwrite a 400.
+		ExpectLookup bool
 	}{
 		{
 			Name:                 "Returns 200 when public dashboard with access token exists",
@@ -36,6 +39,7 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 			AccessTokenExistsErr: nil,
 			AccessToken:          validAccessToken,
 			ExpectedResponseCode: http.StatusOK,
+			ExpectLookup:         true,
 		},
 		{
 			Name:                 "Returns 400 when access token is empty",
@@ -44,6 +48,7 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 			AccessTokenExistsErr: nil,
 			AccessToken:          "",
 			ExpectedResponseCode: http.StatusBadRequest,
+			ExpectLookup:         false,
 		},
 		{
 			Name:                 "Returns 400 when invalid access token",
@@ -52,6 +57,7 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 			AccessTokenExistsErr: nil,
 			AccessToken:          "invalidAccessToken",
 			ExpectedResponseCode: http.StatusBadRequest,
+			ExpectLookup:         false,
 		},
 		{
 			Name:                 "Returns 404 when public dashboard with access token does not exist",
@@ -60,6 +66,7 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 			AccessTokenExistsErr: nil,
 			AccessToken:          validAccessToken,
 			ExpectedResponseCode: http.StatusNotFound,
+			ExpectLookup:         true,
 		},
 		{
 			Name:                 "Returns 500 when public dashboard service gives an error",
@@ -68,17 +75,26 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 			AccessTokenExistsErr: fmt.Errorf("error not found"),
 			AccessToken:          validAccessToken,
 			ExpectedResponseCode: http.StatusInternalServerError,
+			ExpectLookup:         true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			publicdashboardService := &publicdashboards.FakePublicDashboardService{}
-			publicdashboardService.On("ExistsEnabledByAccessToken", mock.Anything, mock.Anything).Return(tt.AccessTokenExists, tt.AccessTokenExistsErr)
+			if tt.ExpectLookup {
+				publicdashboardService.On("ExistsEnabledByAccessToken", mock.Anything, mock.Anything).
+					Return(tt.AccessTokenExists, tt.AccessTokenExistsErr).Once()
+			}
 			params := map[string]string{":accessToken": tt.AccessToken}
 			mw := RequiresExistingAccessToken(publicdashboardService)
 			_, resp := runMw(t, nil, "GET", tt.Path, params, mw)
 			require.Equal(t, tt.ExpectedResponseCode, resp.Code)
+			if tt.ExpectLookup {
+				publicdashboardService.AssertCalled(t, "ExistsEnabledByAccessToken", mock.Anything, mock.Anything)
+			} else {
+				publicdashboardService.AssertNotCalled(t, "ExistsEnabledByAccessToken", mock.Anything, mock.Anything)
+			}
 		})
 	}
 }
