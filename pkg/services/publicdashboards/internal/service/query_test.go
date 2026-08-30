@@ -11,6 +11,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 
+	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	dashboard2 "github.com/grafana/grafana/pkg/kinds/dashboard"
@@ -355,6 +356,131 @@ func TestIntegrationGetQueryDataResponse(t *testing.T) {
 
 		resp, _ := service.GetQueryDataResponse(context.Background(), true, publicDashboardQueryDTO, 1, pubdashDto.AccessToken)
 		require.NotNil(t, resp)
+	})
+}
+
+func TestGetQueryDataResponseAuthz(t *testing.T) {
+	queryDTO := models.PublicDashboardQueryDTO{
+		IntervalMs:    int64(1),
+		MaxDataPoints: int64(1),
+	}
+
+	multiPanelDashboard := func(t *testing.T) *dashboards.Dashboard {
+		t.Helper()
+		customPanels := []interface{}{
+			map[string]interface{}{
+				"id": 1,
+				"datasource": map[string]interface{}{
+					"uid": "ds1",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"datasource": map[string]interface{}{
+							"type": "prometheus",
+							"uid":  "ds1",
+						},
+						"refId": "A",
+						"expr":  "panel_one_metric",
+					},
+				},
+			},
+			map[string]interface{}{
+				"id": 2,
+				"datasource": map[string]interface{}{
+					"uid": "ds2",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"datasource": map[string]interface{}{
+							"type": "prometheus",
+							"uid":  "ds2",
+						},
+						"refId": "B",
+						"expr":  "panel_two_metric",
+					},
+				},
+			},
+		}
+		return createTestDashboard(t, "authzDash", 1, "", true, []map[string]any{}, customPanels)
+	}
+
+	t.Run("returns panel not found when panel ID is not on the dashboard", func(t *testing.T) {
+		dashboard := multiPanelDashboard(t)
+		pubdash := &models.PublicDashboard{
+			Uid:          "pub1",
+			DashboardUid: dashboard.UID,
+			OrgId:        dashboard.OrgID,
+			IsEnabled:    true,
+			AccessToken:  "abc123token",
+		}
+		fakeStore := &publicdashboards.FakePublicDashboardStore{}
+		fakeStore.On("FindByAccessToken", mock.Anything, pubdash.AccessToken).Return(pubdash, nil)
+		fakeDashboardService := &dashboards.FakeDashboardService{}
+		fakeDashboardService.On("GetDashboard", mock.Anything, mock.Anything, mock.Anything).Return(dashboard, nil)
+		fakeQueryService := &query.FakeQueryService{}
+		service, _, _ := newPublicDashboardServiceImpl(t, nil, nil, fakeStore, fakeDashboardService, nil)
+		service.QueryDataService = fakeQueryService
+
+		resp, err := service.GetQueryDataResponse(context.Background(), true, queryDTO, 99, pubdash.AccessToken)
+		require.Error(t, err)
+		require.ErrorContains(t, err, models.ErrPanelNotFound.Error())
+		require.Nil(t, resp)
+		fakeQueryService.AssertNotCalled(t, "QueryData", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("restricts queries to the requested panel only", func(t *testing.T) {
+		dashboard := multiPanelDashboard(t)
+		pubdash := &models.PublicDashboard{
+			Uid:          "pub1",
+			DashboardUid: dashboard.UID,
+			OrgId:        dashboard.OrgID,
+			IsEnabled:    true,
+			AccessToken:  "abc123token",
+		}
+		fakeStore := &publicdashboards.FakePublicDashboardStore{}
+		fakeStore.On("FindByAccessToken", mock.Anything, pubdash.AccessToken).Return(pubdash, nil)
+		fakeDashboardService := &dashboards.FakeDashboardService{}
+		fakeDashboardService.On("GetDashboard", mock.Anything, mock.Anything, mock.Anything).Return(dashboard, nil)
+		fakeQueryService := &query.FakeQueryService{}
+		fakeQueryService.On("QueryData", mock.Anything, mock.Anything, mock.Anything, mock.MatchedBy(func(req dtos.MetricRequest) bool {
+			if len(req.Queries) != 1 {
+				return false
+			}
+			return req.Queries[0].Get("refId").MustString() == "A" &&
+				req.Queries[0].Get("expr").MustString() == "panel_one_metric"
+		})).Return(&backend.QueryDataResponse{Responses: backend.Responses{}}, nil).Once()
+
+		service, _, _ := newPublicDashboardServiceImpl(t, nil, nil, fakeStore, fakeDashboardService, nil)
+		service.QueryDataService = fakeQueryService
+
+		resp, err := service.GetQueryDataResponse(context.Background(), true, queryDTO, 1, pubdash.AccessToken)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		fakeQueryService.AssertExpectations(t)
+	})
+
+	t.Run("returns not enabled when public dashboard is disabled", func(t *testing.T) {
+		dashboard := multiPanelDashboard(t)
+		pubdash := &models.PublicDashboard{
+			Uid:          "pub1",
+			DashboardUid: dashboard.UID,
+			OrgId:        dashboard.OrgID,
+			IsEnabled:    false,
+			AccessToken:  "abc123token",
+		}
+		fakeStore := &publicdashboards.FakePublicDashboardStore{}
+		fakeStore.On("FindByAccessToken", mock.Anything, pubdash.AccessToken).Return(pubdash, nil)
+		fakeDashboardService := &dashboards.FakeDashboardService{}
+		fakeDashboardService.On("GetDashboard", mock.Anything, mock.Anything, mock.Anything).Return(dashboard, nil).Maybe()
+		fakeQueryService := &query.FakeQueryService{}
+		service, _, _ := newPublicDashboardServiceImpl(t, nil, nil, fakeStore, fakeDashboardService, nil)
+		service.QueryDataService = fakeQueryService
+
+		resp, err := service.GetQueryDataResponse(context.Background(), true, queryDTO, 1, pubdash.AccessToken)
+		require.Error(t, err)
+		require.ErrorContains(t, err, models.ErrPublicDashboardNotEnabled.Error())
+		require.Nil(t, resp)
+		fakeQueryService.AssertNotCalled(t, "QueryData", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
 

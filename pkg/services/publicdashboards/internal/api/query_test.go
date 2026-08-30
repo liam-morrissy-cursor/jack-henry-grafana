@@ -226,6 +226,55 @@ func TestAPIQueryPublicDashboard(t *testing.T) {
 		resp := callAPI(server, http.MethodPost, getValidQueryPath(validAccessToken), strings.NewReader("{}"), t)
 		require.Equal(t, http.StatusInternalServerError, resp.Code)
 	})
+
+	t.Run("Status code is 404 when the panel is not on the dashboard", func(t *testing.T) {
+		server, fakeDashboardService := setup(true)
+		fakeDashboardService.On("GetQueryDataResponse", mock.Anything, true, mock.Anything, int64(2), validAccessToken).
+			Return(&backend.QueryDataResponse{}, models.ErrPanelNotFound.Errorf(""))
+
+		resp := callAPI(server, http.MethodPost, getValidQueryPath(validAccessToken), strings.NewReader("{}"), t)
+		require.Equal(t, http.StatusNotFound, resp.Code)
+		var errResp errutil.PublicError
+		err := json.Unmarshal(resp.Body.Bytes(), &errResp)
+		require.NoError(t, err)
+		assert.Equal(t, "publicdashboards.panelNotFound", errResp.MessageID)
+	})
+
+	t.Run("Status code is 404 when access token is missing", func(t *testing.T) {
+		service := publicdashboards.NewFakePublicDashboardService(t)
+		service.On("FindByAccessToken", mock.Anything, validAccessToken).
+			Return(nil, models.ErrPublicDashboardNotFound.Errorf("")).Once()
+		server := setupTestServer(t, nil, service, anonymousUser)
+
+		resp := callAPI(server, http.MethodPost, getValidQueryPath(validAccessToken), strings.NewReader("{}"), t)
+		require.Equal(t, http.StatusNotFound, resp.Code)
+		service.AssertNotCalled(t, "GetQueryDataResponse", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("Status code is 403 when public dashboard is disabled", func(t *testing.T) {
+		service := publicdashboards.NewFakePublicDashboardService(t)
+		service.On("FindByAccessToken", mock.Anything, validAccessToken).
+			Return(&models.PublicDashboard{AccessToken: validAccessToken, IsEnabled: false}, nil).Once()
+		// Query path still reaches GetQueryDataResponse, which enforces enabled state.
+		service.On("GetQueryDataResponse", mock.Anything, true, mock.Anything, int64(2), validAccessToken).
+			Return(&backend.QueryDataResponse{}, models.ErrPublicDashboardNotEnabled.Errorf("")).Once()
+		server := setupTestServer(t, nil, service, anonymousUser)
+
+		resp := callAPI(server, http.MethodPost, getValidQueryPath(validAccessToken), strings.NewReader("{}"), t)
+		require.Equal(t, http.StatusForbidden, resp.Code)
+		var errResp errutil.PublicError
+		err := json.Unmarshal(resp.Body.Bytes(), &errResp)
+		require.NoError(t, err)
+		assert.Equal(t, "publicdashboards.notEnabled", errResp.MessageID)
+	})
+
+	t.Run("Status code is 400 when request body exceeds max size", func(t *testing.T) {
+		server, fakeDashboardService := setup(true)
+		oversizedBody := `{"pad":"` + strings.Repeat("x", maxQueryBodySize) + `"}`
+		resp := callAPI(server, http.MethodPost, getValidQueryPath(validAccessToken), strings.NewReader(oversizedBody), t)
+		require.Equal(t, http.StatusBadRequest, resp.Code)
+		fakeDashboardService.AssertNotCalled(t, "GetQueryDataResponse", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
 }
 
 func getValidQueryPath(accessToken string) string {
