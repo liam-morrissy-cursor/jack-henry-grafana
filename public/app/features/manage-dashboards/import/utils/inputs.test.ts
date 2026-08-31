@@ -1085,8 +1085,7 @@ describe('applyV1Inputs', () => {
   });
 
   it('falls back to matching by plugin type when selections are not index-aligned', () => {
-    // interpolateV1Dashboard dedupes selections per plugin type, so the selections
-    // array can be shorter than the inputs array.
+    // Callers may pass fewer selections than inputs (one per plugin type).
     const dashboard = {
       title: 'dedup selections',
       uid: 'old',
@@ -2579,5 +2578,47 @@ describe('interpolateV1Dashboard', () => {
         { name: 'DS_PROMETHEUS', type: 'datasource', pluginId: 'prometheus', value: 'nonexistent-uid' },
       ])
     ).toThrow('datasource input "DS_PROMETHEUS" references UID "nonexistent-uid" which was not found');
+  });
+
+  it('keeps multiple same-type datasource mappings independent', () => {
+    mockGetDataSourceSrv.getInstanceSettings = jest.fn().mockImplementation((uid: string) => {
+      if (uid === 'prom-a') {
+        return { uid: 'prom-a', type: 'prometheus', name: 'Prom A' };
+      }
+      if (uid === 'prom-b') {
+        return { uid: 'prom-b', type: 'prometheus', name: 'Prom B' };
+      }
+      return undefined;
+    });
+
+    const dashboard = makeDashboard({
+      __inputs: [
+        { ...promInput, name: 'DS_PROM_A', label: 'Prometheus A' },
+        { ...promInput, name: 'DS_PROM_B', label: 'Prometheus B' },
+      ],
+      panels: [
+        {
+          datasource: { type: 'prometheus', uid: '${DS_PROM_A}' },
+          targets: [{ datasource: { type: 'prometheus', uid: '${DS_PROM_A}' }, expr: 'up', refId: 'A' }],
+          type: 'timeseries',
+        },
+        {
+          datasource: { type: 'prometheus', uid: '${DS_PROM_B}' },
+          targets: [{ datasource: { type: 'prometheus', uid: '${DS_PROM_B}' }, expr: 'up', refId: 'A' }],
+          type: 'timeseries',
+        },
+      ] as unknown as DashboardJson['panels'],
+    });
+
+    // Mappings intentionally out of __inputs order to prove we resolve by name.
+    const result = interpolateV1Dashboard(dashboard, [
+      { name: 'DS_PROM_B', type: 'datasource', pluginId: 'prometheus', value: 'prom-b' },
+      { name: 'DS_PROM_A', type: 'datasource', pluginId: 'prometheus', value: 'prom-a' },
+    ]);
+
+    expect(getPanel(result, 0).datasource!.uid).toBe('prom-a');
+    expect(getPanel(result, 1).datasource!.uid).toBe('prom-b');
+    expect((getPanel(result, 0).targets![0].datasource as { uid: string }).uid).toBe('prom-a');
+    expect((getPanel(result, 1).targets![0].datasource as { uid: string }).uid).toBe('prom-b');
   });
 });

@@ -397,28 +397,27 @@ export function interpolateV1Dashboard(
       }))
     : inputMappings;
 
+  // One selection per __inputs entry, in input order, so applyV1Inputs can
+  // index-match multiple inputs that share a plugin type (e.g. two Prometheus).
   const formDataSources: DataSourceInstanceSettings[] = [];
-  const seenPluginIds = new Set<string>();
-  for (const mapping of effectiveMappings.filter((m) => m.type === 'datasource')) {
-    const dsInput = dsInputs.find((i) => i.name === mapping.name);
-    const pluginId = mapping.pluginId ?? dsInput?.pluginId;
-    if (!pluginId || seenPluginIds.has(pluginId)) {
-      continue;
-    }
-
+  for (const dsInput of dsInputs) {
     // Expression datasources are always forced to __expr__ regardless of user input,
     // matching the backend behavior:
     //   if inputDefJson.Get("pluginId").MustString() == expr.DatasourceType {
     //       input = &dashboardimport.ImportDashboardInput{Value: expr.DatasourceType}
     //   }
-    if (pluginId === ExpressionDatasourceRef.type) {
+    if (dsInput.pluginId === ExpressionDatasourceRef.type) {
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
       formDataSources.push({
         uid: ExpressionDatasourceRef.uid,
         type: ExpressionDatasourceRef.type,
         name: ExpressionDatasourceRef.name,
       } as DataSourceInstanceSettings);
-      seenPluginIds.add(pluginId);
+      continue;
+    }
+
+    const mapping = effectiveMappings.find((m) => m.type === 'datasource' && m.name === dsInput.name);
+    if (!mapping) {
       continue;
     }
 
@@ -429,19 +428,6 @@ export function interpolateV1Dashboard(
       );
     }
     formDataSources.push(settings);
-    seenPluginIds.add(pluginId);
-  }
-  // Ensure expression datasources are included even when not explicitly mapped
-  for (const dsInput of dsInputs) {
-    if (dsInput.pluginId === ExpressionDatasourceRef.type && !seenPluginIds.has(ExpressionDatasourceRef.type)) {
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      formDataSources.push({
-        uid: ExpressionDatasourceRef.uid,
-        type: ExpressionDatasourceRef.type,
-        name: ExpressionDatasourceRef.name,
-      } as DataSourceInstanceSettings);
-      seenPluginIds.add(ExpressionDatasourceRef.type);
-    }
   }
 
   const constants: DashboardInput[] = constantRawInputs.map((input) => ({
