@@ -99,20 +99,22 @@ func usePerDatasourceExternalID(jsonData *simplejson.Json) (set bool, enabled bo
 // be persisted for later STS use when usePerDatasourceExternalId is true. When stack ID or UID
 // is missing we cannot validate, so leave the value alone rather than wiping a previously
 // minted ID during misconfiguration.
+//
+// Both native and SigV4 key namespaces are checked. Namespace selection is based on the
+// presence of sigV4AuthType, which a client can set on a native GAR datasource; a stolen
+// native grafanaExternalId would otherwise survive and be consumed by CloudWatch/aws-sdk.
 func clearInvalidGrafanaExternalID(uid, stackExternalID string, jsonData *simplejson.Json) {
-	if jsonData == nil {
+	if jsonData == nil || stackExternalID == "" || uid == "" {
 		return
 	}
-	idKey, _ := externalIDKeys(jsonData)
-	id := jsonData.Get(idKey).MustString()
-	if id == "" {
-		return
-	}
-	if stackExternalID == "" || uid == "" {
-		return
-	}
-	if !isValidGrafanaExternalID(id, stackExternalID, uid) {
-		jsonData.Del(idKey)
+	for _, idKey := range []string{grafanaExternalIDJSONKey, sigV4GrafanaExternalIDJSONKey} {
+		id := jsonData.Get(idKey).MustString()
+		if id == "" {
+			continue
+		}
+		if !isValidGrafanaExternalID(id, stackExternalID, uid) {
+			jsonData.Del(idKey)
+		}
 	}
 }
 

@@ -88,6 +88,22 @@ func TestEnsureGrafanaExternalID(t *testing.T) {
 		assert.Equal(t, wantID, jd.Get(grafanaExternalIDJSONKey).MustString())
 		assert.Empty(t, jd.Get(usePerDatasourceExternalIDJSONKey).Interface())
 	})
+
+	// A client can put sigV4AuthType on a native GAR datasource. Namespace selection
+	// then ignores grafanaExternalId; that field is still what CloudWatch/aws-sdk reads.
+	t.Run("scrubs stolen native ID even when sigV4AuthType is present", func(t *testing.T) {
+		stolen := stack + "-otherUid"
+		jd := simplejson.NewFromAny(map[string]any{
+			"authType":                        grafanaAssumeRoleAuthType,
+			sigV4AuthTypeJSONKey:              "keys",
+			grafanaExternalIDJSONKey:          stolen,
+			usePerDatasourceExternalIDJSONKey: true,
+		})
+		ensureGrafanaExternalID(uid, stack, jd, false)
+		assert.Empty(t, jd.Get(grafanaExternalIDJSONKey).MustString())
+		assert.Empty(t, jd.Get(sigV4GrafanaExternalIDJSONKey).MustString())
+		assert.True(t, jd.Get(usePerDatasourceExternalIDJSONKey).MustBool())
+	})
 }
 
 func TestPreserveGrafanaExternalID(t *testing.T) {
@@ -234,6 +250,19 @@ func TestPreserveGrafanaExternalID(t *testing.T) {
 		preserveGrafanaExternalID(uid, stack, existing, ftOff, false)
 		assert.Equal(t, wantID, ftOff.Get(grafanaExternalIDJSONKey).MustString())
 	})
+
+	t.Run("scrubs stolen native ID on update when sigV4AuthType is present", func(t *testing.T) {
+		existing := garExisting("")
+		updated := simplejson.NewFromAny(map[string]any{
+			"authType":                        grafanaAssumeRoleAuthType,
+			sigV4AuthTypeJSONKey:              "keys",
+			grafanaExternalIDJSONKey:          stolen,
+			usePerDatasourceExternalIDJSONKey: true,
+		})
+		preserveGrafanaExternalID(uid, stack, existing, updated, false)
+		assert.Empty(t, updated.Get(grafanaExternalIDJSONKey).MustString())
+		assert.Empty(t, updated.Get(sigV4GrafanaExternalIDJSONKey).MustString())
+	})
 }
 
 // TestEnsureGrafanaExternalID_SigV4 covers create-time mint/scrub for SigV4 datasources
@@ -270,6 +299,18 @@ func TestEnsureGrafanaExternalID_SigV4(t *testing.T) {
 		})
 		// FT off: scrub happens regardless, but no remint should occur, so the field stays empty.
 		ensureGrafanaExternalID(uid, stack, jd, false)
+		assert.Empty(t, jd.Get(sigV4GrafanaExternalIDJSONKey).MustString())
+	})
+
+	t.Run("scrubs stolen native ID that accompanies a SigV4 GAR payload", func(t *testing.T) {
+		stolen := stack + "-otherUid"
+		jd := simplejson.NewFromAny(map[string]any{
+			sigV4AuthTypeJSONKey:              grafanaAssumeRoleAuthType,
+			grafanaExternalIDJSONKey:          stolen,
+			usePerDatasourceExternalIDJSONKey: true,
+		})
+		ensureGrafanaExternalID(uid, stack, jd, false)
+		assert.Empty(t, jd.Get(grafanaExternalIDJSONKey).MustString())
 		assert.Empty(t, jd.Get(sigV4GrafanaExternalIDJSONKey).MustString())
 	})
 }
