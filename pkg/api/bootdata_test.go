@@ -884,3 +884,131 @@ func TestIntegrationHTTPServer_GetFrontendSettings_publicDashboardDataSourceFilt
 
 	require.ElementsMatch(t, []string{"Prom", "Loki"}, names)
 }
+
+// passwordReturningDSService returns fixed decrypted secrets so tests can assert
+// whether Browser-access credentials were copied into frontend settings.
+type passwordReturningDSService struct {
+	datafakes.FakeDataSourceService
+	password string
+	basic    string
+}
+
+func (s *passwordReturningDSService) DecryptedPassword(_ context.Context, _ *datasources.DataSource) (string, error) {
+	return s.password, nil
+}
+
+func (s *passwordReturningDSService) DecryptedBasicAuthPassword(_ context.Context, _ *datasources.DataSource) (string, error) {
+	return s.basic, nil
+}
+
+func TestIntegrationHTTPServer_GetFrontendSettings_publicDashboardOmitsDirectAccessSecrets(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	pluginList := []pluginstore.Plugin{{
+		Module:          "/influxdb/module.js",
+		JSONData:        plugins.JSONData{ID: datasources.DS_INFLUXDB, Info: plugins.Info{Version: "1.0.0"}, Type: plugins.TypeDataSource},
+		FS:              &pluginfakes.FakePluginFS{},
+		LoadingStrategy: plugins.LoadingStrategyScript,
+	}}
+	pluginSettingsList := map[string]*pluginsettings.DTO{
+		datasources.DS_INFLUXDB: {ID: 1, OrgID: 1, PluginID: datasources.DS_INFLUXDB, PluginVersion: "1.0.0", Enabled: true},
+	}
+
+	cfg := setting.NewCfg()
+	m, hs := setupTestEnvironment(t, cfg, featuremgmt.WithFeatures(),
+		&pluginstore.FakePluginStore{PluginList: pluginList},
+		&pluginsettings.FakePluginSettings{Plugins: pluginSettingsList},
+		nil,
+	)
+
+	const (
+		secretPassword = "influx-super-secret"
+		secretBasic    = "basic-super-secret"
+	)
+
+	hs.DataSourcesService = &passwordReturningDSService{
+		FakeDataSourceService: datafakes.FakeDataSourceService{
+			DataSources: []*datasources.DataSource{{
+				UID:           "ds-uid-influx",
+				Name:          "Influx",
+				Type:          datasources.DS_INFLUXDB,
+				OrgID:         1,
+				Access:        datasources.DS_ACCESS_DIRECT,
+				URL:           "http://influx.internal:8086",
+				User:          "influx-user",
+				BasicAuth:     true,
+				BasicAuthUser: "basic-user",
+				JsonData:      simplejson.New(),
+			}},
+		},
+		password: secretPassword,
+		basic:    secretBasic,
+	}
+
+	testDashboard := simplejson.New()
+	testDashboard.Set("title", "Public Influx Dashboard")
+	testDashboard.Set("uid", "test-uid")
+	testDashboard.Set("panels", []any{
+		map[string]any{"id": 1, "datasource": map[string]any{"uid": "ds-uid-influx"}},
+	})
+	dash := dashboards.NewDashboardFromJson(testDashboard)
+	dash.OrgID = 1
+
+	mockPubDashService := &publicdashboards.FakePublicDashboardService{}
+	mockPubDashService.On("FindPublicDashboardAndDashboardByAccessToken", mock.Anything, "test-token").Return(nil, dash, nil)
+	hs.publicDashboardsService = mockPubDashService
+
+	type settings struct {
+		Datasources map[string]plugins.DataSourceDTO `json:"datasources"`
+	}
+
+	var accessToken string
+	m.UseMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			reqContext := &contextmodel.ReqContext{
+				Context:                    web.FromContext(ctx),
+				SignedInUser:               &user.SignedInUser{OrgID: 1},
+				PublicDashboardAccessToken: accessToken,
+			}
+			ctx = context.WithValue(ctx, ctxkey.Key{}, reqContext)
+			*reqContext.Req = *reqContext.Req.WithContext(ctx)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	})
+
+	serveSettings := func(token string) *httptest.ResponseRecorder {
+		t.Helper()
+		accessToken = token
+		req := httptest.NewRequest(http.MethodGet, "/api/frontend/settings", nil)
+		recorder := httptest.NewRecorder()
+		m.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	t.Run("public dashboard view omits decrypted credentials", func(t *testing.T) {
+		recorder := serveSettings("test-token")
+		var got settings
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &got))
+		require.Equal(t, http.StatusOK, recorder.Code)
+		ds, ok := got.Datasources["Influx"]
+		require.True(t, ok, "expected Influx datasource in public-dashboard bootdata")
+		require.Empty(t, ds.Password)
+		require.Empty(t, ds.Username)
+		require.Empty(t, ds.BasicAuth)
+		require.NotContains(t, recorder.Body.String(), secretPassword)
+		require.NotContains(t, recorder.Body.String(), secretBasic)
+	})
+
+	t.Run("signed-in viewer still receives Browser-access credentials", func(t *testing.T) {
+		recorder := serveSettings("")
+		var got settings
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &got))
+		require.Equal(t, http.StatusOK, recorder.Code)
+		ds, ok := got.Datasources["Influx"]
+		require.True(t, ok)
+		require.Equal(t, secretPassword, ds.Password)
+		require.Equal(t, "influx-user", ds.Username)
+		require.Contains(t, ds.BasicAuth, "Basic ")
+	})
+}
