@@ -292,7 +292,9 @@ func (hs *HTTPServer) getFSDataSources(c *contextmodel.ReqContext, availablePlug
 
 		dsDTO.JSONData = ds.JsonDataMap()
 
-		if ds.Access == datasources.DS_ACCESS_DIRECT {
+		// Public dashboard viewers query through Grafana's public query API.
+		// /bootdata/:accessToken is unauthenticated — never decrypt Browser-access credentials into that payload.
+		if ds.Access == datasources.DS_ACCESS_DIRECT && !c.IsPublicDashboardView() {
 			if ds.BasicAuth {
 				password, err := hs.DataSourcesService.DecryptedBasicAuthPassword(c.Req.Context(), ds)
 				if err != nil {
