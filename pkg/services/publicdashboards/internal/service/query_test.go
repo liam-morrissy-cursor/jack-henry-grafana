@@ -714,6 +714,65 @@ func TestIntegrationFindAnnotations(t *testing.T) {
 		assert.Len(t, items, 1)
 		assert.Equal(t, expected, items[0])
 	})
+
+	t.Run("tag queries omit annotations from other dashboards", func(t *testing.T) {
+		dash := dashboards.NewDashboard("public")
+		dash.ID = 10
+		dash.UID = "public-dash"
+		grafanaTagAnnotation := models.DashAnnotation{
+			Datasource: CreateDatasource("grafana", "grafana"),
+			Enable:     true,
+			Name:       name,
+			IconColor:  color,
+			Target: &dashboard2.AnnotationTarget{
+				Limit:    100,
+				MatchAny: false,
+				Tags:     []string{"incident"},
+				Type:     "tags",
+			},
+		}
+		dashboard := AddAnnotationsToDashboard(t, dash, []models.DashAnnotation{grafanaTagAnnotation})
+
+		pubdash := &models.PublicDashboard{Uid: "uid1", IsEnabled: true, OrgId: 1, DashboardUid: dashboard.UID, AnnotationsEnabled: true}
+		fakeStore := &publicdashboards.FakePublicDashboardStore{}
+		fakeStore.On("FindByAccessToken", mock.Anything, mock.AnythingOfType("string")).Return(pubdash, nil)
+		fakeDashboardService := &dashboards.FakeDashboardService{}
+		fakeDashboardService.On("GetDashboard", mock.Anything, mock.Anything, mock.Anything).Return(dashboard, nil)
+
+		publicUID := "public-dash"
+		privateUID := "private-dash"
+		annotationsRepo := &annotations.FakeAnnotationsRepo{}
+		annotationsRepo.On("Find", mock.Anything, mock.Anything).Return([]*annotations.ItemDTO{
+			{ID: 1, DashboardID: 10, DashboardUID: &publicUID, Tags: []string{"incident"}, Time: 2, TimeEnd: 2, Text: "public note"},
+			{ID: 2, DashboardID: 99, DashboardUID: &privateUID, Tags: []string{"incident"}, Time: 2, TimeEnd: 2, Text: "secret from private dashboard"},
+			{ID: 3, DashboardID: 0, Tags: []string{"incident"}, Time: 2, TimeEnd: 2, Text: "org-wide note"},
+		}, nil).Once()
+
+		service, _, _ := newPublicDashboardServiceImpl(t, nil, nil, fakeStore, fakeDashboardService, annotationsRepo)
+		items, err := service.FindAnnotations(context.Background(), models.AnnotationsQueryDTO{}, "abc123")
+		require.NoError(t, err)
+
+		got := make(map[int64]string, len(items))
+		for _, item := range items {
+			got[item.Id] = item.Text
+		}
+		assert.Equal(t, map[int64]string{
+			1: "public note",
+			3: "org-wide note",
+		}, got)
+	})
+}
+
+func TestAnnotationVisibleOnPublicDashboard(t *testing.T) {
+	dash := &dashboards.Dashboard{ID: 10, UID: "public-dash"}
+	publicUID := "public-dash"
+	privateUID := "private-dash"
+
+	assert.True(t, annotationVisibleOnPublicDashboard(&annotations.ItemDTO{DashboardID: 0}, dash))
+	assert.True(t, annotationVisibleOnPublicDashboard(&annotations.ItemDTO{DashboardID: 10, DashboardUID: &publicUID}, dash))
+	assert.True(t, annotationVisibleOnPublicDashboard(&annotations.ItemDTO{DashboardID: 10}, dash))
+	assert.False(t, annotationVisibleOnPublicDashboard(&annotations.ItemDTO{DashboardID: 99, DashboardUID: &privateUID}, dash))
+	assert.False(t, annotationVisibleOnPublicDashboard(&annotations.ItemDTO{DashboardID: 99}, dash))
 }
 
 func TestIntegrationGetMetricRequest(t *testing.T) {
