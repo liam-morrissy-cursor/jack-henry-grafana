@@ -71,6 +71,14 @@ func (pd *PublicDashboardServiceImpl) FindAnnotations(ctx context.Context, reqDT
 		}
 
 		for _, item := range annotationItems {
+			// Tag queries clear dashboard scope and run as service identity with
+			// wildcard dashboards:read, so the store can return annotations from
+			// private dashboards in the same org. Anonymous viewers must only see
+			// this public dashboard's annotations and org-level ones.
+			if !annotationVisibleOnPublicDashboard(item, dash) {
+				continue
+			}
+
 			event := models.AnnotationEvent{
 				Id:          item.ID,
 				DashboardId: item.DashboardID, // nolint: staticcheck
@@ -107,6 +115,19 @@ func (pd *PublicDashboardServiceImpl) FindAnnotations(ctx context.Context, reqDT
 	}
 
 	return results, nil
+}
+
+func annotationVisibleOnPublicDashboard(item *annotations.ItemDTO, dash *dashboards.Dashboard) bool {
+	if item.DashboardUID != nil && *item.DashboardUID != "" {
+		return *item.DashboardUID == dash.UID
+	}
+	if item.DashboardID == 0 {
+		return true
+	}
+	if dash.ID != 0 {
+		return item.DashboardID == dash.ID
+	}
+	return true
 }
 
 // GetMetricRequest returns a metric request for the given panel and query
