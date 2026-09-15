@@ -197,8 +197,11 @@ func (hs *HTTPServer) registerRoutes() {
 		r.Get("/public-dashboards/list", reqSignedIn, hs.Index)
 
 		// anonymous view public dashboard
+		// RequiresExistingAccessToken rejects disabled/unknown tokens before Index/bootdata
+		// assemble org frontend settings (datasources, feature flags, license).
 		r.Get("/public-dashboards/:accessToken",
 			hs.PublicDashboardsApi.Middleware.HandleView,
+			publicdashboards.RequiresExistingAccessToken(hs.PublicDashboardsApi.PublicDashboardService),
 			publicdashboards.SetPublicDashboardAccessToken,
 			publicdashboards.SetPublicDashboardOrgIdOnContext(hs.PublicDashboardsApi.PublicDashboardService),
 			publicdashboards.CountPublicDashboardRequest(),
@@ -208,6 +211,7 @@ func (hs *HTTPServer) registerRoutes() {
 		r.Get("/bootdata/:accessToken",
 			reqNoAuth,
 			hs.PublicDashboardsApi.Middleware.HandleView,
+			publicdashboards.RequiresExistingAccessToken(hs.PublicDashboardsApi.PublicDashboardService),
 			publicdashboards.SetPublicDashboardAccessToken,
 			publicdashboards.SetPublicDashboardOrgIdOnContext(hs.PublicDashboardsApi.PublicDashboardService),
 			publicdashboards.CountPublicDashboardRequest(),

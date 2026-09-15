@@ -642,7 +642,7 @@ func (hs *HTTPServer) getEnabledOAuthProviders() map[string]any {
 }
 
 func (hs *HTTPServer) publicDashFilterUsedDataSources(c *contextmodel.ReqContext, allDataSources []*datasources.DataSource) ([]*datasources.DataSource, error) {
-	_, dash, err := hs.publicDashboardsService.FindPublicDashboardAndDashboardByAccessToken(c.Req.Context(), c.PublicDashboardAccessToken)
+	_, dash, err := hs.publicDashboardsService.FindEnabledPublicDashboardAndDashboardByAccessToken(c.Req.Context(), c.PublicDashboardAccessToken)
 	if err != nil {
 		return nil, err
 	}
