@@ -79,6 +79,9 @@ func TestRequiresExistingAccessToken(t *testing.T) {
 			mw := RequiresExistingAccessToken(publicdashboardService)
 			_, resp := runMw(t, nil, "GET", tt.Path, params, mw)
 			require.Equal(t, tt.ExpectedResponseCode, resp.Code)
+			if tt.AccessToken == "" || tt.AccessToken == "invalidAccessToken" {
+				publicdashboardService.AssertNotCalled(t, "ExistsEnabledByAccessToken")
+			}
 		})
 	}
 }

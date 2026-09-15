@@ -16,6 +16,7 @@ import (
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/db"
+	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/remotecache"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/infra/usagestats"
@@ -842,7 +843,7 @@ func TestIntegrationHTTPServer_GetFrontendSettings_publicDashboardDataSourceFilt
 	dash.OrgID = 1
 
 	mockPubDashService := &publicdashboards.FakePublicDashboardService{}
-	mockPubDashService.On("FindPublicDashboardAndDashboardByAccessToken", mock.Anything, "test-token").Return(nil, dash, nil)
+	mockPubDashService.On("FindEnabledPublicDashboardAndDashboardByAccessToken", mock.Anything, "test-token").Return(nil, dash, nil)
 	hs.publicDashboardsService = mockPubDashService
 
 	m.UseMiddleware(func(next http.Handler) http.Handler {
@@ -883,4 +884,59 @@ func TestIntegrationHTTPServer_GetFrontendSettings_publicDashboardDataSourceFilt
 	}
 
 	require.ElementsMatch(t, []string{"Prom", "Loki"}, names)
+}
+
+func TestIntegrationHTTPServer_GetFrontendSettings_publicDashboardNotEnabledOmitsDatasources(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	pluginList := []pluginstore.Plugin{{
+		Module:          "/prometheus/module.js",
+		JSONData:        plugins.JSONData{ID: "prometheus", Info: plugins.Info{Version: "1.0.0"}, Type: plugins.TypeDataSource},
+		FS:              &pluginfakes.FakePluginFS{},
+		LoadingStrategy: plugins.LoadingStrategyScript,
+	}}
+	pluginSettingsList := map[string]*pluginsettings.DTO{
+		"prometheus": {ID: 1, OrgID: 1, PluginID: "prometheus", PluginVersion: "1.0.0", Enabled: true},
+	}
+
+	cfg := setting.NewCfg()
+	m, hs := setupTestEnvironment(t, cfg, featuremgmt.WithFeatures(),
+		&pluginstore.FakePluginStore{PluginList: pluginList},
+		&pluginsettings.FakePluginSettings{Plugins: pluginSettingsList},
+		nil,
+	)
+
+	hs.DataSourcesService = &datafakes.FakeDataSourceService{
+		DataSources: []*datasources.DataSource{
+			{UID: "ds-uid-1", Name: "Prom", Type: "prometheus", OrgID: 1, JsonData: simplejson.New(), Access: datasources.DS_ACCESS_DIRECT, BasicAuth: true, BasicAuthUser: "viewer"},
+		},
+	}
+
+	mockPubDashService := &publicdashboards.FakePublicDashboardService{}
+	mockPubDashService.On("FindEnabledPublicDashboardAndDashboardByAccessToken", mock.Anything, "test-token").
+		Return(nil, nil, publicdashboards.ErrPublicDashboardNotFound)
+	hs.publicDashboardsService = mockPubDashService
+
+	m.UseMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			reqContext := &contextmodel.ReqContext{
+				Context:                    web.FromContext(ctx),
+				SignedInUser:               &user.SignedInUser{OrgID: 1},
+				PublicDashboardAccessToken: "test-token",
+				Logger:                     log.New("test"),
+			}
+			ctx = context.WithValue(ctx, ctxkey.Key{}, reqContext)
+			*reqContext.Req = *reqContext.Req.WithContext(ctx)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/frontend/settings", nil)
+	recorder := httptest.NewRecorder()
+	m.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "Prom")
+	require.NotContains(t, recorder.Body.String(), "viewer")
 }
