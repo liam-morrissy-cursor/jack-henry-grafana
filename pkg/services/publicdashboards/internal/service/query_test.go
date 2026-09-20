@@ -661,6 +661,41 @@ func TestIntegrationFindAnnotations(t *testing.T) {
 		require.Nil(t, items)
 	})
 
+	t.Run("Test find annotations does not panic on legacy string grafana datasource", func(t *testing.T) {
+		items, err := findAnnotationsFromRawList(t, `[{
+			"builtIn": 1,
+			"datasource": "-- Grafana --",
+			"enable": true,
+			"name": "Annotations & Alerts",
+			"type": "dashboard"
+		}]`)
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		require.Equal(t, "text", items[0].Text)
+	})
+
+	t.Run("Test find annotations does not panic when datasource uid is missing on built-in query", func(t *testing.T) {
+		items, err := findAnnotationsFromRawList(t, `[{
+			"builtIn": 1,
+			"enable": true,
+			"name": "Annotations & Alerts",
+			"type": "dashboard"
+		}]`)
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		require.Equal(t, "text", items[0].Text)
+	})
+
+	t.Run("Test find annotations skips enable-only plugin annotation with no datasource", func(t *testing.T) {
+		items, err := findAnnotationsFromRawList(t, `[{
+			"enable": true,
+			"name": "no-ds-prom-annos",
+			"iconColor": "yellow"
+		}]`)
+		require.NoError(t, err)
+		require.Empty(t, items)
+	})
+
 	t.Run("Test find annotations does not panics when Target in datasource is nil", func(t *testing.T) {
 		dash := dashboards.NewDashboard("test")
 		grafanaAnnotation := models.DashAnnotation{
@@ -714,6 +749,35 @@ func TestIntegrationFindAnnotations(t *testing.T) {
 		assert.Len(t, items, 1)
 		assert.Equal(t, expected, items[0])
 	})
+}
+
+func findAnnotationsFromRawList(t *testing.T, listJSON string) ([]models.AnnotationEvent, error) {
+	t.Helper()
+
+	dash := dashboards.NewDashboard("test")
+	annos, err := simplejson.NewJson([]byte(`{"list":` + listJSON + `}`))
+	require.NoError(t, err)
+	dash.Data.Set("annotations", annos)
+
+	pubdash := &models.PublicDashboard{Uid: "uid1", IsEnabled: true, OrgId: 1, DashboardUid: dash.UID, AnnotationsEnabled: true}
+	fakeStore := &publicdashboards.FakePublicDashboardStore{}
+	fakeStore.On("FindByAccessToken", mock.Anything, mock.AnythingOfType("string")).Return(pubdash, nil)
+	fakeDashboardService := &dashboards.FakeDashboardService{}
+	fakeDashboardService.On("GetDashboard", mock.Anything, mock.Anything, mock.Anything).Return(dash, nil)
+	annotationsRepo := &annotations.FakeAnnotationsRepo{}
+	annotationsRepo.On("Find", mock.Anything, mock.Anything).Return([]*annotations.ItemDTO{
+		{
+			ID:          1,
+			DashboardID: 1,
+			PanelID:     1,
+			Text:        "text",
+			Time:        2,
+			TimeEnd:     2,
+		},
+	}, nil).Maybe()
+
+	service, _, _ := newPublicDashboardServiceImpl(t, nil, nil, fakeStore, fakeDashboardService, annotationsRepo)
+	return service.FindAnnotations(context.Background(), models.AnnotationsQueryDTO{}, "abc123")
 }
 
 func TestIntegrationGetMetricRequest(t *testing.T) {
