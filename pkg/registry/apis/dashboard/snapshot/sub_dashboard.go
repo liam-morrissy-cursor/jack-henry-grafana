@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/registry/rest"
@@ -70,6 +71,10 @@ func (r *dashboardREST) Connect(ctx context.Context, name string, opts runtime.O
 	snap, ok := obj.(*dashv0.Snapshot)
 	if !ok {
 		return nil, fmt.Errorf("expected Snapshot, got %T", obj)
+	}
+
+	if snapshotIsExpired(snap) {
+		return nil, apierrors.NewNotFound(dashv0.SnapshotResourceInfo.GroupResource(), name)
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
