@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/open-feature/go-sdk/openfeature"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -66,6 +67,12 @@ func (n *storageWrapper) Get(ctx context.Context, name string, options *metav1.G
 	if err != nil {
 		return nil, err
 	}
+	// Read-time expiry matches GET /api/snapshots/:key. Cleanup deletes asynchronously,
+	// so an expired snapshot must not remain readable through the k8s API (anonymous
+	// GET is allowed on snapshots and the dashboard subresource).
+	if snap, ok := obj.(*dashv0.Snapshot); ok && snapshotIsExpired(snap) {
+		return nil, apierrors.NewNotFound(dashv0.SnapshotResourceInfo.GroupResource(), name)
+	}
 	return stripSensitiveFields(obj), nil
 }
 func (n *storageWrapper) List(ctx context.Context, options *internalversion.ListOptions) (runtime.Object, error) {
@@ -115,6 +122,16 @@ func (n *storageWrapper) Delete(ctx context.Context, name string, deleteValidati
 	}
 
 	return result, deleted, nil
+}
+
+// snapshotIsExpired reports whether a snapshot's absolute expiry timestamp has passed.
+// Missing or non-positive Spec.Expires means "never expires" (legacy rows store a
+// ~50-year sentinel that conversion drops).
+func snapshotIsExpired(snap *dashv0.Snapshot) bool {
+	if snap == nil || snap.Spec.Expires == nil || *snap.Spec.Expires <= 0 {
+		return false
+	}
+	return time.UnixMilli(*snap.Spec.Expires).Before(time.Now())
 }
 
 // stripSensitiveFields returns a copy of the Snapshot with deleteKey and dashboard removed from the spec.
