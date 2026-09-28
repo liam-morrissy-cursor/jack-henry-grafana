@@ -54,14 +54,37 @@ function mapFieldsToTypes(columns: SQLSelectableValue[]) {
   return fields;
 }
 
+// Multi-value variables already expand to quoted literals ('a','b'). The builder
+// wraps the variable in quotes, which would double-quote it. Strip only that
+// wrapper. A global replace of (' and ') also rewrites unrelated literals.
 export function removeQuotesForMultiVariables(val: SQLExpression, templateVars: TypedVariableModel[]) {
-  const multiVariableInWhereString = (tv: TypedVariableModel) =>
-    'multi' in tv &&
-    tv.multi &&
-    (val.whereString?.includes(`\${${tv.name}}`) || val.whereString?.includes(`$${tv.name}`));
-
-  if (templateVars.some((tv) => multiVariableInWhereString(tv))) {
-    val.whereString = val.whereString?.replaceAll("')", ')');
-    val.whereString = val.whereString?.replaceAll("('", '(');
+  if (!val.whereString) {
+    return;
   }
+
+  let whereString = val.whereString;
+
+  for (const tv of templateVars) {
+    if (!('multi' in tv) || !tv.multi || !tv.name) {
+      continue;
+    }
+
+    const escapedName = escapeRegExp(tv.name);
+    const quotedVariable = [
+      // ('${name}')
+      new RegExp(`\\('(\\$\\{${escapedName}\\})'\\)`, 'g'),
+      // ('$name'), but not a longer identifier such as ('$nameSuffix')
+      new RegExp(`\\('(\\$${escapedName})(?![A-Za-z0-9_])'\\)`, 'g'),
+    ];
+
+    for (const pattern of quotedVariable) {
+      whereString = whereString.replaceAll(pattern, '($1)');
+    }
+  }
+
+  val.whereString = whereString;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
